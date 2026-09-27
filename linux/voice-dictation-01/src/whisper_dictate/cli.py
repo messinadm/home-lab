@@ -158,7 +158,9 @@ class App:
         except client.ServiceError as error:
             bad(str(error), SERVICE_HINT)
         else:
-            ok(f"service running: {status.get('model', '?')} on "
+            revision = status.get("revision")
+            pinned = f" @ {revision[:7]}" if revision else ""
+            ok(f"service running: {status.get('model', '?')}{pinned} on "
                f"{status.get('device', '?')}, {status.get('state', '?')}")
             cublas = status.get("cublas") or []
             ok(f"cuBLAS: {cublas[0] if cublas else 'none loaded'}")
@@ -188,8 +190,8 @@ def run_service(settings: Settings) -> int:  # pragma: no cover - needs the GPU
     log.info("cuBLAS from %s", cublas_dir or "the system")
     engine = transcriber.Transcriber(transcriber.load_model(settings), settings.language)
     engine.warm_up()
-    info = {"model": settings.model, "device": settings.device,
-            "cublas": transcriber.loaded_cublas()}
+    info = {"model": settings.model, "revision": settings.model_revision,
+            "device": settings.device, "cublas": transcriber.loaded_cublas()}
     log.info("ready: %s", info)
     from .server import Service, sd_notify, serve
 
@@ -197,7 +199,10 @@ def run_service(settings: Settings) -> int:  # pragma: no cover - needs the GPU
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
-    serve(service, settings.socket_path, stop, on_ready=lambda: sd_notify("READY=1"))
+    try:
+        serve(service, settings.socket_path, stop, on_ready=lambda: sd_notify("READY=1"))
+    finally:
+        service.close()
     return 0
 
 

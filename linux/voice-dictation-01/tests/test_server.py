@@ -176,3 +176,26 @@ def test_sd_notify_handles_abstract_sockets():
 
 def test_sd_notify_survives_a_missing_socket(tmp_path):
     assert sd_notify("READY=1", env={"NOTIFY_SOCKET": str(tmp_path / "gone")}) is False
+
+
+def test_close_stops_a_recording_and_deletes_the_audio(tmp_path):
+    service, recorder, _ = make_service(tmp_path)
+    service.handle({"command": "start"})
+    service.close()
+    assert not recorder.recording
+    assert not (tmp_path / "rec.wav").exists()
+
+
+def test_close_when_idle_is_harmless(tmp_path):
+    service, recorder, _ = make_service(tmp_path)
+    service.close()
+    assert not recorder.recording
+
+
+def test_close_deletes_audio_even_if_stopping_fails(tmp_path):
+    recorder = FakeRecorder(tmp_path / "rec.wav", stop_error="pw-record did not stop")
+    service = Service(recorder, FakeTranscriber())
+    service.handle({"command": "start"})
+    (tmp_path / "rec.wav").write_bytes(b"partial audio")
+    service.close()
+    assert not (tmp_path / "rec.wav").exists()

@@ -54,6 +54,7 @@ def load_model(settings: Settings) -> Model:  # pragma: no cover - needs the GPU
         compute_type=settings.compute_type,
         download_root=str(settings.models_dir),
         local_files_only=True,
+        revision=settings.model_revision,
     )
 
 
@@ -61,7 +62,8 @@ def fetch_model(settings: Settings) -> str:  # pragma: no cover - network
     """Download the model once. The only step that uses the network."""
     from faster_whisper import download_model
 
-    return download_model(settings.model, cache_dir=str(settings.models_dir))
+    return download_model(settings.model, cache_dir=str(settings.models_dir),
+                          revision=settings.model_revision)
 
 
 class Transcriber:

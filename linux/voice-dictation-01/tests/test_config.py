@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from whisper_dictate.config import Settings
+from whisper_dictate.config import DEFAULT_MODEL_REVISION, Settings
 
 
 def test_defaults_for_a_desktop_session():
@@ -50,3 +50,15 @@ def test_missing_runtime_dir_falls_back_to_the_uid(monkeypatch):
 def test_reads_the_process_environment_by_default(monkeypatch):
     monkeypatch.setenv("WHISPER_DICTATE_MODEL", "tiny.en")
     assert Settings.from_env().model == "tiny.en"
+
+
+def test_the_default_model_is_pinned_to_the_tested_revision():
+    assert Settings.from_env({"XDG_RUNTIME_DIR": "/r", "HOME": "/h"}).model_revision == (
+        DEFAULT_MODEL_REVISION)
+
+
+def test_another_model_is_not_pinned_unless_asked():
+    env = {"XDG_RUNTIME_DIR": "/r", "HOME": "/h", "WHISPER_DICTATE_MODEL": "small.en"}
+    assert Settings.from_env(env).model_revision is None
+    env["WHISPER_DICTATE_MODEL_REVISION"] = "abc123"
+    assert Settings.from_env(env).model_revision == "abc123"

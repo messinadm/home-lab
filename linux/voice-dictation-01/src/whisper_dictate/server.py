@@ -32,6 +32,15 @@ class Service:
         self._clock = clock
         self._started_at: float | None = None
 
+    def close(self) -> None:
+        """Stop any recording in progress and delete its audio."""
+        if self.recorder.recording:
+            try:
+                self.recorder.stop()
+            except RecorderError:
+                pass
+        self.recorder.discard()
+
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         command = request.get("command")
         if command == "start":
@@ -129,7 +138,7 @@ def serve(service: Service, path: Path, stop: threading.Event,
           on_ready: Callable[[], object] | None = None) -> None:
     """Handle one connection at a time until `stop` is set."""
     server = bind(path)
-    server.settimeout(0.2)
+    server.settimeout(1.0)
     if on_ready is not None:
         on_ready()
     try:

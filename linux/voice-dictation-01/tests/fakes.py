@@ -4,10 +4,11 @@ from whisper_dictate.recorder import RecorderError
 
 
 class FakeRecorder:
-    def __init__(self, path, start_error=None):
+    def __init__(self, path, start_error=None, stop_error=None):
         self.path = path
         self.recording = False
         self.start_error = start_error
+        self.stop_error = stop_error
 
     def start(self):
         if self.start_error:
@@ -18,8 +19,13 @@ class FakeRecorder:
         if not self.recording:
             raise RecorderError("not recording")
         self.recording = False
+        if self.stop_error:
+            raise RecorderError(self.stop_error)
         self.path.write_bytes(b"audio")
         return self.path
+
+    def discard(self):
+        self.path.unlink(missing_ok=True)
 
 
 class FakeTranscriber:

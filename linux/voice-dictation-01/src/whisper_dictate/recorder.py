@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import signal
 import subprocess
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -59,14 +60,18 @@ class Recorder:
                 f"input is {source or 'unknown'}, not a microphone. Is your headset on?"
             )
         self.path.unlink(missing_ok=True)
-        process = self._popen(
-            [PW_RECORD, "--rate", "16000", "--channels", "1", "--format", "s16",
-             str(self.path)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        )
-        if process.poll() is not None:
-            detail = process.stderr.read().decode(errors="replace").strip() if process.stderr else ""
-            raise RecorderError(f"pw-record exited at once: {detail or process.returncode}")
+        # A temporary file, not a pipe: nothing reads a pipe during a long
+        # recording, and once it filled up pw-record would block mid-dictation.
+        with tempfile.TemporaryFile() as log_file:
+            process = self._popen(
+                [PW_RECORD, "--rate", "16000", "--channels", "1", "--format", "s16",
+                 str(self.path)],
+                stdout=subprocess.DEVNULL, stderr=log_file,
+            )
+            if process.poll() is not None:
+                log_file.seek(0)
+                detail = log_file.read().decode(errors="replace").strip()
+                raise RecorderError(f"pw-record exited at once: {detail or process.returncode}")
         self._process = process
 
     def stop(self, timeout: float = 5.0) -> Path:
@@ -79,7 +84,13 @@ class Recorder:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+            self.discard()
             raise RecorderError("pw-record did not stop") from None
         if not self.path.exists() or self.path.stat().st_size <= WAV_HEADER_BYTES:
+            self.discard()
             raise RecorderError("nothing was recorded")
         return self.path
+
+    def discard(self) -> None:
+        """Delete the recording, so no audio is left behind."""
+        self.path.unlink(missing_ok=True)

@@ -1,4 +1,3 @@
-import io
 import signal
 import subprocess
 from pathlib import Path
@@ -10,13 +9,15 @@ from whisper_dictate.recorder import Recorder, RecorderError
 
 
 class FakeProcess:
-    def __init__(self, path, write=b"R" * 100, exits_at_once=False, returncode=0,
-                 stderr=b"", hangs=False):
+    def __init__(self, path, stderr_file=None, write=b"R" * 100, exits_at_once=False,
+                 returncode=0, stderr=b"", hangs=False):
         self.path = Path(path)
         self.write = write
         self.exited = exits_at_once
         self.returncode = returncode
-        self.stderr = io.BytesIO(stderr) if stderr is not None else None
+        if stderr and stderr_file is not None:
+            stderr_file.write(stderr)
+            stderr_file.flush()
         self.hangs = hangs
         self.signals = []
         self.killed = False
@@ -44,7 +45,8 @@ def make(tmp_path, source="bluez_input.mic", **process_options):
 
     def popen(argv, **kwargs):
         calls.append(argv)
-        popen.process = FakeProcess(wav, **process_options)
+        popen.kwargs = kwargs
+        popen.process = FakeProcess(wav, kwargs.get("stderr"), **process_options)
         return popen.process
 
     return Recorder(wav, popen=popen, source_lookup=lambda: source), popen, calls, wav
@@ -158,3 +160,35 @@ def test_default_source_is_empty_when_pactl_cannot_run(error):
 ])
 def test_is_microphone(source, expected):
     assert recorder.is_microphone(source) is expected
+
+
+def test_pw_record_errors_go_to_a_file_not_a_pipe(tmp_path):
+    rec, popen, _calls, _wav = make(tmp_path)
+    rec.start()
+    stderr = popen.kwargs["stderr"]
+    assert stderr is not subprocess.PIPE
+    assert hasattr(stderr, "fileno")
+
+
+def test_a_recorder_that_ignores_sigint_leaves_no_audio(tmp_path):
+    rec, _popen, _calls, wav = make(tmp_path, hangs=True)
+    rec.start()
+    with pytest.raises(RecorderError):
+        rec.stop(timeout=0.01)
+    assert not wav.exists()
+
+
+def test_an_empty_recording_leaves_no_file(tmp_path):
+    rec, _popen, _calls, wav = make(tmp_path, write=b"H" * recorder.WAV_HEADER_BYTES)
+    rec.start()
+    with pytest.raises(RecorderError):
+        rec.stop()
+    assert not wav.exists()
+
+
+def test_discard_deletes_the_recording(tmp_path):
+    rec, _popen, _calls, wav = make(tmp_path)
+    wav.write_bytes(b"audio")
+    rec.discard()
+    rec.discard()
+    assert not wav.exists()

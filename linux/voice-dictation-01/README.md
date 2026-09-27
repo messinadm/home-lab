@@ -13,7 +13,7 @@ Dictate into any app on Linux, especially AI agents like Claude Code in a termin
 | Piece | Role |
 |---|---|
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) 1.2 on CTranslate2 4.8 | Runs the model on the GPU |
-| distil-large-v3 | The speech model (English only), 1.5 GB on disk |
+| distil-large-v3 | The speech model (English only), 1.5 GB on disk, pinned to the version this was tested with |
 | `nvidia-cublas-cu12` 12.9 (the `cuda` extra) | NVIDIA's GPU math library, with code built for current cards |
 | `pw-record` (PipeWire) | Records the microphone |
 | [wtype](https://github.com/atx/wtype) 0.4 | Types into the focused Wayland window |
@@ -32,7 +32,7 @@ Five seconds of speech transcribes in about 0.15 s on an RTX 5070 Ti, so the tex
 - It records until you press stop, so pausing to think doesn't cut anything off.
 - Newlines and other control characters are typed as spaces, so a dictation never presses Enter and sends a half-finished prompt.
 - The service runs offline. The only network use is the one-time model download.
-- Audio is kept in `$XDG_RUNTIME_DIR`, which lives in memory, and is deleted after each dictation. Logs record durations and character counts, never the text.
+- Audio is kept in `$XDG_RUNTIME_DIR`, which lives in memory, and is deleted after each dictation, including one that fails or is cut short by a service restart. Logs record durations and character counts, never the text.
 - If anything goes wrong, a desktop notification says what.
 - The clipboard is only a fallback: if typing fails, the text goes there so it isn't lost.
 
@@ -134,7 +134,9 @@ systemctl --user restart whisper-dictate
 
 ## Things we struggled with
 
-**Speech Note hid the pipeline.** Driving it from outside meant reading its settings file and guessing at its state values (see [voice-dictation-00](../voice-dictation-00/)). Owning each step removed that guesswork.
+**Existing dictation apps are hard to drive from outside.** Speech Note, the obvious local option on Flathub, has no stable interface for other programs: getting its text out meant reading its settings file and guessing at its internal state values. Running faster-whisper directly means every step is ours to test.
+
+**ydotool doesn't type into COSMIC windows.** It's the usual tool for synthetic typing on Wayland, and Ubuntu 24.04 ships version 0.1.8 from 2021. Its daemon runs and reports success, but COSMIC never delivers the keystrokes. `wtype` uses Wayland's virtual-keyboard protocol instead, and COSMIC accepts that.
 
 **The GPU was newer than the system's CUDA libraries.** With the CUDA 12.0 cuBLAS from Ubuntu's toolkit, the first transcription took 11 s while the driver compiled code for the RTX 5070 Ti, and later ones took 0.22 s. NVIDIA's cuBLAS 12.9 from PyPI ships that code ready-made: no compile, and 0.10 s. The service loads it ahead of the system copy, and `check` shows which one is in use.
 
@@ -169,7 +171,7 @@ WHISPER_DICTATE_GPU_TEST=1 uv run --extra cuda pytest -m gpu --no-cov
 ## Limitations
 
 - It needs an NVIDIA GPU. `WHISPER_DICTATE_DEVICE=cpu` with a smaller model might work, but it's untested.
-- The model, distil-large-v3, is English only. `WHISPER_DICTATE_MODEL` picks another model: set it for the service, run `fetch-model`, and restart.
+- The model, distil-large-v3, is English only. `WHISPER_DICTATE_MODEL` picks another model: set it for the service, run `fetch-model`, and restart. Only the default model is pinned to a tested version; `WHISPER_DICTATE_MODEL_REVISION` pins another.
 - The model stays in GPU memory for as long as the service runs.
 
 ## Possible next steps

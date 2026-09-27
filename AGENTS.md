@@ -9,7 +9,7 @@ Small, unrelated projects that don't need their own repo.
 
 ## Project READMEs
 
-Write the result, not the history. Sections, in order:
+Write the result, not the history. Each README stands alone: it may point to a related project at the top, but someone who never ran that project must be able to follow it. Sections, in order:
 
 Goal, What it uses, How it works, Requirements, Setup, Daily use, Things we struggled with, Troubleshooting, Limitations, Possible next steps.
 

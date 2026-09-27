@@ -115,12 +115,13 @@ def test_check_passes_when_everything_is_in_place(tmp_path):
     sock, env = wayland_env(tmp_path)
     with sock:
         status = {"ok": True, "state": "idle", "model": "distil-large-v3",
-                  "device": "cuda", "cublas": ["/nv/libcublas.so.12"]}
+                  "revision": "c3058b475261292e", "device": "cuda",
+                  "cublas": ["/nv/libcublas.so.12"]}
         h = Harness(tmp_path, replies={"status": status}, env=env)
         assert h.app.check() == 0
     output = h.out.getvalue()
     assert "FAIL" not in output
-    assert "distil-large-v3 on cuda, idle" in output
+    assert "distil-large-v3 @ c3058b4 on cuda, idle" in output
     assert "/nv/libcublas.so.12" in output
     assert "all checks passed" in output
 
