@@ -1,0 +1,376 @@
+#!/bin/bash
+#===============================================================================
+# dictate -- Speech Note dictation that types into the focused window.
+#
+#   dictate start   check the setup, snapshot the note, start listening
+#   dictate stop    stop listening, wait for the transcript, type it
+#   dictate check   test each assumption below and report which one fails
+#
+# Speech Note appends each transcript to its note and saves the note in
+# settings.conf, sometimes before you press stop. `start` snapshots the note;
+# `stop` types everything added since, once Speech Note is idle and the note
+# has settled. Control characters become spaces, so nothing presses Enter.
+#
+# Assumptions a Speech Note update could break (run `dictate check`):
+#   - the note is stored as `note=` in $conf, in Qt's INI format
+#   - the D-Bus State property is 3 when Speech Note is idle
+#   - InvokeAction accepts start-listening and stop-listening
+#
+# Failures raise a desktop notification and go to $log, which records timings
+# and character counts, never the text.
+#===============================================================================
+
+shopt -s extglob
+umask 077
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
+	for sock in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+		[[ -S $sock ]] || continue
+		export WAYLAND_DISPLAY="${sock##*/}"
+		break
+	done
+fi
+
+readonly python=/usr/bin/python3
+readonly gdbus=/usr/bin/gdbus
+readonly wtype=/usr/bin/wtype
+readonly pactl=/usr/bin/pactl
+readonly wl_copy=/usr/bin/wl-copy
+readonly stat=/usr/bin/stat
+readonly flock=/usr/bin/flock
+readonly sleep=/usr/bin/sleep
+
+readonly app='net.mkiol.SpeechNote'
+readonly obj='/net/mkiol/SpeechNote'
+readonly conf="$HOME/.var/app/$app/config/net.mkiol/dsnote/settings.conf"
+readonly snap="$XDG_RUNTIME_DIR/dictate.snapshot"
+readonly log="$XDG_RUNTIME_DIR/dictate.log"
+readonly idle_state=3
+readonly limit_ms=15000		# give up, and never type, after this
+readonly settle_ms=200		# idle and note unchanged this long = done
+readonly quiet_ms=3000		# note changed, then unchanged this long = done
+readonly empty_ms=3000		# idle this long with no new text = nothing heard
+
+owner=''			# Speech Note's unique bus name, set by sn_find
+
+log() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*" >> "$log"; }
+
+# Quote a string as a GVariant literal for gdbus.
+gv() {
+	local s=${1//\\/\\\\}
+	s=${s//\'/\\\'}
+	printf "'%s'" "$s"
+}
+
+# Desktop notification through the freedesktop service.
+alert() {
+	log "ALERT: $1: $2"
+	"$gdbus" call --session --dest org.freedesktop.Notifications \
+		--object-path /org/freedesktop/Notifications \
+		--method org.freedesktop.Notifications.Notify \
+		"$(gv Dictation)" 0 "$(gv audio-input-microphone)" \
+		"$(gv "$1")" "$(gv "$2")" '[]' '{}' 8000 >/dev/null 2>&1
+}
+
+now_ms() {
+	local t=${EPOCHREALTIME//[.,]/}
+	printf '%s' "$(( t / 1000 ))"
+}
+
+bus_has() {
+	[[ $("$gdbus" call --session --dest org.freedesktop.DBus \
+		--object-path /org/freedesktop/DBus \
+		--method org.freedesktop.DBus.NameHasOwner "$1" 2>/dev/null) \
+		== '(true,)' ]]
+}
+
+# Resolve Speech Note's unique bus name. Calls addressed to it never
+# auto-launch the app the way its well-known name does.
+sn_find() {
+	local out re="'(:[0-9.]+)'"
+	owner=''
+	bus_has "$app" || return 1
+	out="$("$gdbus" call --session --dest org.freedesktop.DBus \
+		--object-path /org/freedesktop/DBus \
+		--method org.freedesktop.DBus.GetNameOwner "$app" 2>/dev/null)"
+	[[ $out =~ $re ]] || return 1
+	owner=${BASH_REMATCH[1]}
+}
+
+sn_state() {
+	local out re='<([0-9]+)>'
+	out="$("$gdbus" call --session --dest "$owner" --object-path "$obj" \
+		--method org.freedesktop.DBus.Properties.Get "$app" State \
+		2>/dev/null)"
+	[[ $out =~ $re ]] && printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# Run a Speech Note action; the return code is Speech Note's error (0 = ok).
+sn_action() {
+	local out re="'error': <([0-9]+)>"
+	out="$("$gdbus" call --session --dest "$owner" --object-path "$obj" \
+		--method "$app.InvokeAction" "$(gv "$1")" '{}' 2>&1)"
+	[[ $out =~ $re ]] && return "${BASH_REMATCH[1]}"
+	log "InvokeAction $1: $out"
+	return 255
+}
+
+# Print the note from settings.conf, undoing Qt's INI escaping.
+read_note() {
+	"$python" - "$conf" <<'PY'
+import re, sys
+try:
+    text = open(sys.argv[1], encoding='utf-8').read()
+except OSError:
+    sys.exit(0)
+m = re.search(r'^note=(.*)$', text, re.M)
+if not m:
+    sys.exit(0)
+v = m.group(1)
+if len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+    v = v[1:-1]
+esc = {'n': '\n', 't': '\t', 'r': '\r', '"': '"', '\\': '\\', '0': ' '}
+out, i = [], 0
+while i < len(v):
+    if v[i] == '\\' and i + 1 < len(v):
+        n = v[i + 1]
+        if n == 'x':
+            j, h = i + 2, ''
+            while j < len(v) and len(h) < 4 and v[j] in '0123456789abcdefABCDEF':
+                h += v[j]
+                j += 1
+            out.append(chr(int(h, 16)) if h else 'x')
+            i = j
+            continue
+        out.append(esc.get(n, n))
+        i += 2
+        continue
+    out.append(v[i])
+    i += 1
+sys.stdout.write(''.join(out))
+PY
+}
+
+mtime() { "$stat" -c '%.9Y' "$conf" 2>/dev/null; }
+
+# Text added since the snapshot, flattened to one clean line.
+new_text() {
+	local before=$1 now=$2 new
+	if [[ $now == "$before"* ]]; then
+		new=${now#"$before"}
+	else
+		new=${now##*$'\n'}
+	fi
+	new=${new//[[:cntrl:]]/ }
+	new=${new//+([[:space:]])/ }
+	new=${new##+([[:space:]])}
+	new=${new%%+([[:space:]])}
+	printf '%s' "$new"
+}
+
+do_start() {
+	exec 8> "$XDG_RUNTIME_DIR/dictate-start.lock"
+	"$flock" -n 8 || exit 0
+	: > "$log"
+	log 'start'
+
+	if ! sn_find; then
+		alert 'Speech Note is not running' \
+			'Open Speech Note, then press Alt+D again.'
+		exit 1
+	fi
+
+	local src note state
+	src="$("$pactl" get-default-source 2>/dev/null)"
+	if [[ -z $src || $src == *.monitor ]]; then
+		alert 'No microphone' "Input is ${src:-unknown}. Is your headset on?"
+		exit 1
+	fi
+
+	# A second start during a session must not move the snapshot forward.
+	state="$(sn_state)"
+	if [[ $state == "$idle_state" || ! -f $snap ]]; then
+		note="$(read_note)"
+		printf '%s' "$note" > "$snap"
+		log "snapshot: ${#note} chars"
+	else
+		log "already busy (state $state), keeping snapshot"
+	fi
+
+	sn_action start-listening
+	local rc=$?
+	if (( rc != 0 )); then
+		alert 'Speech Note refused to start' "Error $rc. Run: dictate check"
+		exit 1
+	fi
+	log 'listening'
+}
+
+do_stop() {
+	exec 9> "$XDG_RUNTIME_DIR/dictate-stop.lock"
+	"$flock" -n 9 || exit 0
+
+	# Consume the snapshot now, so a new start can't have it deleted.
+	local before
+	if [[ -f $snap ]]; then
+		before="$(< "$snap")"
+		rm -f "$snap"
+	else
+		log 'stop: no snapshot, using current note'
+		before="$(read_note)"
+	fi
+
+	if ! sn_find; then
+		alert 'Speech Note is not running' 'Nothing was recorded.'
+		exit 1
+	fi
+
+	local t0 t=0 mt last_mt note last_change=0 idle_since='' rc new st last_st=''
+	t0="$(now_ms)"
+	sn_action stop-listening
+	rc=$?
+	(( rc == 0 )) || log "stop-listening returned $rc"
+
+	last_mt="$(mtime)"
+	note="$(read_note)"
+	while :; do
+		"$sleep" 0.1
+		t=$(( $(now_ms) - t0 ))
+		mt="$(mtime)"
+		if [[ $mt != "$last_mt" ]]; then
+			last_mt=$mt
+			note="$(read_note)"
+			last_change=$t
+			log "note saved at ${t}ms"
+		fi
+		st="$(sn_state)"
+		if [[ $st != "$last_st" ]]; then
+			log "state ${last_st:-start} -> ${st:-unreadable} at ${t}ms"
+			last_st=$st
+		fi
+		if [[ $st == "$idle_state" ]]; then
+			[[ -n $idle_since ]] || idle_since=$t
+		else
+			idle_since=''
+		fi
+		if [[ $note != "$before" ]]; then
+			[[ -n $idle_since ]] && (( t - last_change >= settle_ms )) \
+				&& break
+			(( t - last_change >= quiet_ms )) && break
+		elif [[ -n $idle_since ]] && (( t - idle_since >= empty_ms )); then
+			alert 'Nothing was transcribed' \
+				'Check that your microphone is on.'
+			exit 0
+		fi
+		if (( t >= limit_ms )); then
+			alert 'Dictation timed out' \
+				'No text after 15 seconds, so nothing was typed.'
+			exit 1
+		fi
+	done
+
+	new="$(new_text "$before" "$note")"
+	if [[ -z $new ]]; then
+		alert 'Nothing was transcribed' 'Check that your microphone is on.'
+		exit 0
+	fi
+
+	log "typing ${#new} chars, ${t}ms after stop"
+	if printf '%s' "$new" | "$wtype" - 2>>"$log"; then
+		log 'typed'
+	else
+		printf '%s' "$new" | "$wl_copy" 2>>"$log"
+		alert 'Could not type the text' \
+			'It is on your clipboard. Paste it where you want it.'
+		exit 1
+	fi
+}
+
+do_check() {
+	local fails=0 t missing='' state src
+	ok()  { printf '  ok    %s\n' "$1"; }
+	bad() { printf '  FAIL  %s\n        %s\n' "$1" "$2"; (( fails++ )); }
+
+	for t in "$python" "$gdbus" "$wtype" "$pactl" "$wl_copy" "$stat" \
+		"$flock" "$sleep"; do
+		[[ -x $t ]] || missing+=" $t"
+	done
+	if [[ -z $missing ]]; then
+		ok 'tools installed'
+	else
+		bad 'tools missing:' "$missing"
+	fi
+
+	if [[ -S $XDG_RUNTIME_DIR/${WAYLAND_DISPLAY:-none} ]]; then
+		ok "Wayland display: $WAYLAND_DISPLAY"
+	else
+		bad 'no Wayland display' 'Run this from your desktop session.'
+	fi
+
+	if sn_find; then
+		ok "Speech Note running ($owner)"
+	else
+		bad 'Speech Note is not running' 'Open it, then run this again.'
+	fi
+
+	if grep -q '^actions_api_enabled=true' "$conf" 2>/dev/null; then
+		ok 'outside actions enabled'
+	else
+		bad 'outside actions are off' \
+			"Enable them in Speech Note's settings ($conf)."
+	fi
+
+	if [[ -r $conf ]]; then
+		t="$(read_note)"
+		ok "note readable: ${#t} chars"
+	else
+		bad 'settings file missing' "$conf"
+	fi
+
+	if [[ -n $owner ]]; then
+		state="$(sn_state)"
+		if [[ $state == "$idle_state" ]]; then
+			ok "state: $state (idle)"
+			if sn_action stop-listening; then
+				ok 'InvokeAction works'
+			else
+				bad 'InvokeAction failed' "error $?, see $log"
+			fi
+		elif [[ -n $state ]]; then
+			bad "state: $state, not idle" \
+				'Try again once Speech Note is idle.'
+		else
+			bad 'state unreadable' 'The D-Bus State property changed?'
+		fi
+	fi
+
+	src="$("$pactl" get-default-source 2>/dev/null)"
+	if [[ -n $src && $src != *.monitor ]]; then
+		ok "microphone: $src"
+	else
+		bad "input is ${src:-unknown}" \
+			'That is a speaker monitor, not a mic. Is your headset on?'
+	fi
+
+	if alert 'Dictation check' 'If you can see this, alerts work.'; then
+		ok 'alert accepted (you should see a notification)'
+	else
+		bad 'alert rejected' 'Failures will only be logged.'
+	fi
+
+	if (( fails == 0 )); then
+		printf '\nall checks passed\n'
+	else
+		printf '\n%d check(s) failed\n' "$fails"
+	fi
+	(( fails == 0 ))
+}
+
+case "${1:-}" in
+	start) do_start ;;
+	stop)  do_stop ;;
+	check) do_check ;;
+	*)     printf 'usage: dictate start|stop|check\n' >&2; exit 2 ;;
+esac

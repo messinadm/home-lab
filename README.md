@@ -6,4 +6,4 @@ Small projects and experiments that don't need their own repo.
 
 | Project | What it does | Status |
 |---|---|---|
-| [Voice dictation](linux/voice-dictation/) | Local, GPU-accelerated dictation that types into any app on Linux, without a Wispr Flow subscription | Working |
+| [Voice dictation](linux/voice-dictation-00/) | Local, GPU-accelerated dictation that types into any app on Linux, without a Wispr Flow subscription | Working |

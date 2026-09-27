@@ -14,16 +14,20 @@ Dictate into any app on Linux, especially AI agents like Claude Code in a termin
 | FasterWhisper Distil Large-v3 | The speech model (English only), run on the GPU |
 | Speech Note NVIDIA add-on | CUDA acceleration |
 | [wtype](https://github.com/atx/wtype) 0.4 | Types text into the focused Wayland window |
-| [`dictate`](dictate) | Starts and stops recording, and types the result |
+| [`dictate`](dictate) | Starts and stops recording, types the result, and checks the setup |
 | COSMIC custom shortcuts | Alt+D to start, Alt+Shift+D to stop and type |
 
 ## How it works
 
-1. **Alt+D** runs `dictate start`, which snapshots Speech Note's note and tells it to start listening.
+1. **Alt+D** runs `dictate start`. It checks that Speech Note is running and that a real microphone is selected, snapshots Speech Note's note, and tells Speech Note to start listening.
 2. Speech Note appends each transcript to its note and saves the note in its `settings.conf`.
-3. **Alt+Shift+D** runs `dictate stop`, which stops listening, waits until Speech Note is idle and the note has settled, then types everything added since the snapshot into the focused window with `wtype`.
+3. **Alt+Shift+D** runs `dictate stop`. It tells Speech Note to stop, waits until Speech Note reports it's idle and the note is saved, then types everything added since the snapshot into the focused window with `wtype`.
 
-The text appears a second or two after you press stop. Like Wispr Flow, it arrives when you finish, not word by word. Line breaks are typed as spaces, so a long dictation never presses Enter and sends a half-finished prompt. The clipboard isn't touched.
+Text appears about two seconds after you press stop, most of it Speech Note transcribing. Like Wispr Flow, it arrives when you finish, not word by word.
+
+- Line breaks and other control characters are typed as spaces, so a dictation never presses Enter and sends a half-finished prompt.
+- If anything goes wrong, a desktop notification says what.
+- The clipboard is only a fallback: if typing fails, the text goes there so it isn't lost.
 
 ## Requirements
 
@@ -33,7 +37,7 @@ The text appears a second or two after you press stop. Like Wispr Flow, it arriv
 | Desktop session | COSMIC on Wayland | `echo $XDG_CURRENT_DESKTOP $XDG_SESSION_TYPE` prints `COSMIC wayland` |
 | Flatpak with Flathub | Preinstalled on Pop!_OS | `flatpak remotes` lists `flathub` |
 | NVIDIA GPU (optional) | RTX 5070 Ti, driver 580 | `nvidia-smi` |
-| Microphone | Bluetooth headset | `pactl info \| grep 'Default Source'` names a mic, not a `.monitor` |
+| Microphone | Bluetooth headset | `pactl get-default-source` names a mic, not a `.monitor` |
 
 Other distributions and desktops are untested. The typing step needs a Wayland compositor that supports the virtual-keyboard protocol, which COSMIC does.
 
@@ -61,11 +65,13 @@ In Speech Note's settings, enable the option that lets other programs invoke act
 actions_api_enabled=true
 ```
 
-### 4. Install wtype
+### 4. Install wtype and wl-clipboard
 
 ```bash
-sudo apt install wtype
+sudo apt install wtype wl-clipboard
 ```
+
+`wl-clipboard` is only used when typing fails, and may already be installed.
 
 ### 5. Install the script
 
@@ -73,7 +79,7 @@ sudo apt install wtype
 install -m 0755 dictate ~/.local/bin/dictate
 ```
 
-It also needs `python3`, `gdbus`, and `flock`, which Pop!_OS ships by default.
+It also uses `python3`, `gdbus`, `pactl`, and `flock`, which Pop!_OS ships by default.
 
 ### 6. Add the shortcuts
 
@@ -86,13 +92,23 @@ In COSMIC Settings, under Keyboard, add two custom shortcuts:
 
 Give the script's full path. The shortcuts work immediately, no logout needed.
 
-### 7. Try it
+### 7. Check the setup
 
-With Speech Note open, click into a text editor, press Alt+D, say a sentence, and press Alt+Shift+D.
+With Speech Note open:
+
+```bash
+~/.local/bin/dictate check
+```
+
+Every line should say `ok`, and a "Dictation check" notification should appear.
+
+### 8. Try it
+
+Click into a text editor, press Alt+D, say a sentence, and press Alt+Shift+D.
 
 ## Daily use
 
-- Open Speech Note once after you log in. It can sit in the background.
+- Open Speech Note once after you log in. It can sit in the background. If you forget, Alt+D tells you.
 - Alt+D, talk, Alt+Shift+D.
 - Speech Note keeps every transcript in its note, saved as plain text in `settings.conf`. Clear the note in the app when you want them gone.
 - If a long dictation gets cut off at a pause, check Speech Note's listening mode in its settings and choose the one that keeps listening until you stop it.
@@ -108,18 +124,29 @@ With Speech Note open, click into a text editor, press Alt+D, say a sentence, an
 
 **Speech Note sometimes saves the transcript before you press stop.** If the script only looked for changes after stop, it would miss text that was already saved, and dictation would work or fail depending on timing. That's why `dictate start` takes the snapshot, and `dictate stop` types everything added since then.
 
-**If Speech Note isn't running, Alt+D opens it instead of recording.** Actions only reach a running instance. Running it headless (`dsnote --service`) isn't an option while the app is open: it fails with `dbus service registration failed`.
+**Failures were silent.** Speech Note not running, a headset that was off, and an empty transcript all looked the same: the start and stop sounds played and nothing appeared. `dictate` now checks for these and sends a notification, and `dictate check` tests the whole setup.
 
-**A headset that's switched off fails silently.** The default input falls back to a "monitor" source that records speaker output, so you get the start and stop sounds and an empty transcript. Check the input with:
+**Anything addressed to Speech Note by name launches it.** Its actions and its D-Bus name both start the app when it isn't running, which opens its window instead of recording. `dictate` checks first, and talks to the running instance's unique bus name, which can't launch anything. Running Speech Note headless (`dsnote --service`) isn't an option while the app is open: it fails with `dbus service registration failed`.
 
-```bash
-pactl info | grep 'Default Source'
-```
-
-It should name a microphone, not something ending in `.monitor`.
+**A headset that's switched off leaves no microphone.** The default input falls back to a "monitor" source that records speaker output. `dictate start` refuses to record from a monitor and tells you.
 
 **COSMIC can launch the script without the session environment,** and `wtype` then fails without an error. `dictate` restores the Wayland and D-Bus addresses itself when they're missing.
 
 ## Troubleshooting
 
-`dictate` logs each dictation to `$XDG_RUNTIME_DIR/dictate.log`, usually `/run/user/1000/dictate.log`. The log shows when listening started and stopped, and how many characters were typed. It doesn't record the text.
+Run `~/.local/bin/dictate check`. It tests each thing the script relies on and names the one that failed.
+
+For a specific dictation, read `$XDG_RUNTIME_DIR/dictate.log`, usually `/run/user/1000/dictate.log`. It covers the most recent dictation: when listening started, Speech Note's state changes and note saves after stop (in milliseconds), and how many characters were typed. It never records the text.
+
+| Notification | Meaning |
+|---|---|
+| Speech Note is not running | Open Speech Note and try again. |
+| No microphone | The input is a speaker monitor, usually because the headset is off. |
+| Speech Note refused to start | Outside actions are off, or Speech Note changed. Run `dictate check`. |
+| Nothing was transcribed | Speech Note heard nothing. Check the microphone. |
+| Dictation timed out | No text after 15 seconds, so nothing was typed. |
+| Could not type the text | Typing failed. The text is on your clipboard. |
+
+## Limitations
+
+`dictate` depends on three things in Speech Note that aren't documented interfaces: the note is saved as `note=` in `settings.conf`, the D-Bus `State` property is `3` when Speech Note is idle, and D-Bus `InvokeAction` accepts `start-listening` and `stop-listening`. A Speech Note update could change any of them, and `dictate check` will say which. A follow-up project may replace Speech Note with a pipeline that doesn't depend on another app's internals.
