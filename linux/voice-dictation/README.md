@@ -17,8 +17,6 @@ Dictate into any app on Linux, especially AI agents like Claude Code in a termin
 | [`dictate`](dictate) | Starts and stops recording, and types the result |
 | COSMIC custom shortcuts | Alt+D to start, Alt+Shift+D to stop and type |
 
-Tested on Pop!_OS 24.04 with the COSMIC desktop (Wayland) and an NVIDIA RTX 5070 Ti on driver 580.
-
 ## How it works
 
 1. **Alt+D** runs `dictate start`, which snapshots Speech Note's note and tells it to start listening.
@@ -26,6 +24,18 @@ Tested on Pop!_OS 24.04 with the COSMIC desktop (Wayland) and an NVIDIA RTX 5070
 3. **Alt+Shift+D** runs `dictate stop`, which stops listening, waits until Speech Note is idle and the note has settled, then types everything added since the snapshot into the focused window with `wtype`.
 
 The text appears a second or two after you press stop. Like Wispr Flow, it arrives when you finish, not word by word. Line breaks are typed as spaces, so a long dictation never presses Enter and sends a half-finished prompt. The clipboard isn't touched.
+
+## Requirements
+
+| Need | Tested with | Check |
+|---|---|---|
+| Operating system | Pop!_OS 24.04 LTS | `grep PRETTY_NAME /etc/os-release` |
+| Desktop session | COSMIC on Wayland | `echo $XDG_CURRENT_DESKTOP $XDG_SESSION_TYPE` prints `COSMIC wayland` |
+| Flatpak with Flathub | Preinstalled on Pop!_OS | `flatpak remotes` lists `flathub` |
+| NVIDIA GPU (optional) | RTX 5070 Ti, driver 580 | `nvidia-smi` |
+| Microphone | Bluetooth headset | `pactl info \| grep 'Default Source'` names a mic, not a `.monitor` |
+
+Other distributions and desktops are untested. The typing step needs a Wayland compositor that supports the virtual-keyboard protocol, which COSMIC does.
 
 ## Setup
 
