@@ -149,4 +149,11 @@ For a specific dictation, read `$XDG_RUNTIME_DIR/dictate.log`, usually `/run/use
 
 ## Limitations
 
-`dictate` depends on three things in Speech Note that aren't documented interfaces: the note is saved as `note=` in `settings.conf`, the D-Bus `State` property is `3` when Speech Note is idle, and D-Bus `InvokeAction` accepts `start-listening` and `stop-listening`. A Speech Note update could change any of them, and `dictate check` will say which. A follow-up project may replace Speech Note with a pipeline that doesn't depend on another app's internals.
+`dictate` depends on three things in Speech Note that aren't documented interfaces: the note is saved as `note=` in `settings.conf`, the D-Bus `State` property is `3` when Speech Note is idle, and D-Bus `InvokeAction` accepts `start-listening` and `stop-listening`. A Speech Note update could change any of them, and `dictate check` will say which.
+
+## Possible next steps
+
+- **Drop Speech Note.** Record with PipeWire, transcribe with faster-whisper directly on the GPU, and type with `wtype`, so nothing depends on another app's internals. This would be its own project.
+- **One key instead of two.** Make Alt+D a toggle: press to start, press again to stop and type. True hold-to-talk isn't possible here, because COSMIC shortcuts only fire when a key is pressed, not released.
+- **Start Speech Note at login,** so the first dictation after a reboot works without opening it by hand.
+- **Clear old transcripts.** Speech Note keeps every transcript in its note, and nothing prunes it.
