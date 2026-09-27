@@ -6,33 +6,35 @@ This replaces [voice-dictation-00](../voice-dictation-00/), which drove the Spee
 
 ## Goal
 
-Dictate into any app on Linux, especially AI agents like Claude Code in a terminal, using local tools instead of paying for Wispr Flow. Every step is code in this project, covered by tests, with nothing depending on another app's internals.
+Dictate into any app on Linux, especially AI agents like Claude Code in a terminal, using native tools instead of paying for Wispr Flow, which has no Linux version. Every step is code in this project, covered by tests, with nothing depending on another app's internals.
 
 ## What it uses
 
 | Piece | Role |
 |---|---|
-| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) 1.2 on CTranslate2 4.8 | Runs the speech model |
-| distil-large-v3 | The model: English only, 1.5 GB on disk |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) 1.2 on CTranslate2 4.8 | Runs the model on the GPU |
+| distil-large-v3 | The speech model (English only), 1.5 GB on disk |
 | `nvidia-cublas-cu12` 12.9 (the `cuda` extra) | NVIDIA's GPU math library, with code built for current cards |
 | `pw-record` (PipeWire) | Records the microphone |
 | [wtype](https://github.com/atx/wtype) 0.4 | Types into the focused Wayland window |
-| `whisper-dictate` (this project) | The service and the command |
+| [`whisper-dictate`](src/whisper_dictate/) | The service, and the command that starts, stops, types, and checks |
 | systemd user service | Keeps the model loaded |
 | COSMIC custom shortcuts | Alt+D to start, Alt+Shift+D to stop and type |
 
 ## How it works
 
-1. At login, systemd starts `whisper-dictate serve`. It loads the model onto the GPU, runs it once to warm up, and listens on a socket only you can use. systemd counts it as started only once it's ready, which takes about a second.
+1. At login, systemd starts `whisper-dictate serve`. It loads the model onto the GPU, runs it once to warm up, and listens on a socket only you can use. It only counts as started once it's ready, which takes about a second.
 2. **Alt+D** runs `whisper-dictate start`. The service checks that the input is a real microphone and starts recording.
-3. **Alt+Shift+D** runs `whisper-dictate stop`. The service stops recording, transcribes, deletes the audio, and returns the text, which the command types into the focused window.
+3. **Alt+Shift+D** runs `whisper-dictate stop`. The service stops recording, transcribes, deletes the audio, and returns the text, which the command types into the focused window with `wtype`.
 
 Five seconds of speech transcribes in about 0.15 s on an RTX 5070 Ti, so the text appears almost as soon as you press stop. Like Wispr Flow, it arrives when you finish, not word by word.
 
+- It records until you press stop, so pausing to think doesn't cut anything off.
 - Newlines and other control characters are typed as spaces, so a dictation never presses Enter and sends a half-finished prompt.
 - The service runs offline. The only network use is the one-time model download.
 - Audio is kept in `$XDG_RUNTIME_DIR`, which lives in memory, and is deleted after each dictation. Logs record durations and character counts, never the text.
-- If anything goes wrong, a desktop notification says what. If typing fails, the text goes to the clipboard instead.
+- If anything goes wrong, a desktop notification says what.
+- The clipboard is only a fallback: if typing fails, the text goes there so it isn't lost.
 
 ## Requirements
 
@@ -122,7 +124,7 @@ Click into a text editor, press Alt+D, say a sentence, and press Alt+Shift+D.
 - Alt+D, talk, Alt+Shift+D. There's no app to open first.
 - The service holds about 2.2 GB of GPU memory while it runs. `systemctl --user stop whisper-dictate` frees it, and `start` brings it back in about a second.
 - While bound, Alt+D no longer does its usual jobs (delete-word in terminals, focus the address bar in browsers). Pick another key if you rely on those.
-- After changing the code, run the tests, then reinstall and restart:
+- To update after changing the code, run the tests, then reinstall and restart:
 
 ```bash
 uv run pytest
@@ -167,7 +169,7 @@ WHISPER_DICTATE_GPU_TEST=1 uv run --extra cuda pytest -m gpu --no-cov
 ## Limitations
 
 - It needs an NVIDIA GPU. `WHISPER_DICTATE_DEVICE=cpu` with a smaller model might work, but it's untested.
-- distil-large-v3 is English only. `WHISPER_DICTATE_MODEL` picks another model: set it for the service, run `fetch-model`, and restart.
+- The model, distil-large-v3, is English only. `WHISPER_DICTATE_MODEL` picks another model: set it for the service, run `fetch-model`, and restart.
 - The model stays in GPU memory for as long as the service runs.
 
 ## Possible next steps

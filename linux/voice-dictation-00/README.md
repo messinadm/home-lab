@@ -1,5 +1,7 @@
 # Voice dictation on Linux
 
+Replaced by [voice-dictation-01](../voice-dictation-01/), which doesn't need Speech Note. This setup no longer runs here; it's kept as a record.
+
 Press a key, talk, press another key, and your words type into whatever app has focus. Transcription runs locally on the GPU. Nothing goes to the cloud.
 
 ## Goal
