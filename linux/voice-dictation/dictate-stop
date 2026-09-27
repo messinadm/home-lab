@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+#===============================================================================
+# dictate-stop -- stop Speech Note dictation and type the new transcript into
+# the focused window with wtype.
+#
+# Speech Note's start-listening-clipboard action returns empty transcripts on
+# this setup, but plain start-listening works: it appends each transcript to the
+# note, which Speech Note persists in settings.conf. So we snapshot the note,
+# stop listening, wait for it to change, and type whatever was appended.
+#
+# COSMIC's Spawn() may not pass the Wayland environment, so it is restored
+# defensively -- without WAYLAND_DISPLAY wtype fails silently.
+#===============================================================================
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
+	for sock in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+		[[ -S $sock ]] || continue
+		export WAYLAND_DISPLAY="${sock##*/}"
+		break
+	done
+fi
+
+readonly app='net.mkiol.SpeechNote'
+readonly conf="$HOME/.var/app/$app/config/net.mkiol/dsnote/settings.conf"
+readonly log="$XDG_RUNTIME_DIR/dictate-stop.log"
+readonly max_ticks=150		# 15s, in 0.1s polls
+
+log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >> "$log"; }
+
+# The shortcut has been seen firing twice per press; only one run may type.
+exec 9> "$XDG_RUNTIME_DIR/dictate-stop.lock"
+flock -n 9 || exit 0
+
+# Print the note from settings.conf, undoing Qt's INI escaping.
+read_note() {
+	python3 - "$conf" <<'PY'
+import re, sys
+try:
+    text = open(sys.argv[1], encoding='utf-8').read()
+except OSError:
+    sys.exit(0)
+m = re.search(r'^note=(.*)$', text, re.M)
+if not m:
+    sys.exit(0)
+v = m.group(1)
+if len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+    v = v[1:-1]
+esc = {'n': '\n', 't': '\t', 'r': '\r', '"': '"', '\\': '\\', '0': '\0'}
+out, i = [], 0
+while i < len(v):
+    if v[i] == '\\' and i + 1 < len(v):
+        n = v[i + 1]
+        if n == 'x':
+            j, h = i + 2, ''
+            while j < len(v) and len(h) < 4 and v[j] in '0123456789abcdefABCDEF':
+                h += v[j]
+                j += 1
+            out.append(chr(int(h, 16)) if h else 'x')
+            i = j
+            continue
+        out.append(esc.get(n, n))
+        i += 2
+        continue
+    out.append(v[i])
+    i += 1
+sys.stdout.write(''.join(out))
+PY
+}
+
+: > "$log"
+log "start  WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-<unset>}"
+
+before="$(read_note)"
+log "note before: ${#before} chars"
+
+flatpak run --command=dsnote "$app" --action stop-listening >/dev/null 2>&1
+log "stop-listening sent (rc=$?)"
+
+for (( i = 0; i < max_ticks; i++ )); do
+	now="$(read_note)"
+	if [[ $now != "$before" ]]; then
+		if [[ $now == "$before"* ]]; then
+			new="${now#"$before"}"
+		else
+			new="${now##*$'\n'}"
+		fi
+		new="${new#"${new%%[![:space:]]*}"}"
+		new="${new%"${new##*[![:space:]]}"}"
+		if [[ -n $new ]]; then
+			log "note changed after ${i}00ms; typing ${#new} chars"
+			printf '%s' "$new" | wtype -
+			log "wtype rc=$?"
+			exit 0
+		fi
+	fi
+	sleep 0.1
+done
+
+log 'TIMEOUT: note never changed in 15s'
+exit 1
