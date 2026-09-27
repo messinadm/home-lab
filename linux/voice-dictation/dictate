@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+#===============================================================================
+# dictate -- start/stop Speech Note dictation and type the transcript into the
+# focused window with wtype.
+#
+#   dictate start   snapshot Speech Note's note, then start listening
+#   dictate stop    stop listening, wait for the transcript, type it
+#
+# Speech Note appends each transcript to its note and saves the note in
+# settings.conf, sometimes before you press stop. So `start` snapshots the note
+# and `stop` types everything added since, once Speech Note is idle and the
+# note has settled. Line breaks become spaces so nothing presses Enter.
+#
+# COSMIC's Spawn() may not pass the session environment, so the Wayland and
+# D-Bus addresses are restored defensively.
+#===============================================================================
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
+	for sock in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+		[[ -S $sock ]] || continue
+		export WAYLAND_DISPLAY="${sock##*/}"
+		break
+	done
+fi
+
+readonly app='net.mkiol.SpeechNote'
+readonly conf="$HOME/.var/app/$app/config/net.mkiol/dsnote/settings.conf"
+readonly snap="$XDG_RUNTIME_DIR/dictate.snapshot"
+readonly log="$XDG_RUNTIME_DIR/dictate.log"
+readonly max_ticks=600		# give up after 60s (0.1s polls)
+readonly settle_ticks=5		# note unchanged 0.5s = saved
+readonly fallback_ticks=30	# changed and unchanged 3s = done, even without state
+readonly empty_ticks=30		# idle 3s with no change = nothing was said
+
+log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >> "$log"; }
+
+# Print the note from settings.conf, undoing Qt's INI escaping.
+read_note() {
+	python3 - "$conf" <<'PY'
+import re, sys
+try:
+    text = open(sys.argv[1], encoding='utf-8').read()
+except OSError:
+    sys.exit(0)
+m = re.search(r'^note=(.*)$', text, re.M)
+if not m:
+    sys.exit(0)
+v = m.group(1)
+if len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+    v = v[1:-1]
+esc = {'n': '\n', 't': '\t', 'r': '\r', '"': '"', '\\': '\\', '0': '\0'}
+out, i = [], 0
+while i < len(v):
+    if v[i] == '\\' and i + 1 < len(v):
+        n = v[i + 1]
+        if n == 'x':
+            j, h = i + 2, ''
+            while j < len(v) and len(h) < 4 and v[j] in '0123456789abcdefABCDEF':
+                h += v[j]
+                j += 1
+            out.append(chr(int(h, 16)) if h else 'x')
+            i = j
+            continue
+        out.append(esc.get(n, n))
+        i += 2
+        continue
+    out.append(v[i])
+    i += 1
+sys.stdout.write(''.join(out))
+PY
+}
+
+# Speech Note's State property; 3 is idle.
+sn_state() {
+	gdbus call --session --dest "$app" --object-path /net/mkiol/SpeechNote \
+		--method org.freedesktop.DBus.Properties.Get "$app" State \
+		2>/dev/null | grep -oE '[0-9]+' | head -n 1
+}
+
+sn_action() {
+	flatpak run --command=dsnote "$app" --action "$1" >/dev/null 2>&1
+}
+
+do_start() {
+	: > "$log"
+	read_note > "$snap"
+	log "start: snapshot $(wc -c < "$snap") bytes"
+	sn_action start-listening
+	log "start-listening sent (rc=$?)"
+}
+
+do_stop() {
+	# The shortcut has been seen firing twice per press; only one run types.
+	exec 9> "$XDG_RUNTIME_DIR/dictate.lock"
+	flock -n 9 || exit 0
+
+	local before now prev new i stable=0 idle_for=0
+	if [[ -f $snap ]]; then
+		before="$(< "$snap")"
+	else
+		before="$(read_note)"
+		log 'stop: no snapshot, using current note'
+	fi
+
+	sn_action stop-listening
+	log "stop-listening sent (rc=$?)"
+
+	prev="$(read_note)"
+	for (( i = 1; i <= max_ticks; i++ )); do
+		sleep 0.1
+		now="$(read_note)"
+		if [[ $now == "$prev" ]]; then
+			(( stable++ ))
+		else
+			stable=0
+			prev="$now"
+		fi
+		if [[ $(sn_state) == 3 ]]; then
+			(( idle_for++ ))
+		else
+			idle_for=0
+		fi
+		if [[ $now != "$before" ]]; then
+			(( idle_for > 0 && stable >= settle_ticks )) && break
+			(( stable >= fallback_ticks )) && break
+		elif (( idle_for >= empty_ticks )); then
+			log 'stop: nothing transcribed'
+			rm -f "$snap"
+			exit 0
+		fi
+	done
+	rm -f "$snap"
+
+	if (( i > max_ticks )); then
+		log 'TIMEOUT: no transcript after 60s'
+		exit 1
+	fi
+
+	if [[ $now == "$before"* ]]; then
+		new="${now#"$before"}"
+	else
+		new="${now##*$'\n'}"
+	fi
+	new="${new//$'\n'/ }"
+	new="${new#"${new%%[![:space:]]*}"}"
+	new="${new%"${new##*[![:space:]]}"}"
+	if [[ -z $new ]]; then
+		log 'stop: nothing new'
+		exit 0
+	fi
+
+	log "typing ${#new} chars, $(( i * 100 ))ms after stop"
+	printf '%s' "$new" | wtype -
+	log "wtype rc=$?"
+}
+
+case "${1:-}" in
+	start) do_start ;;
+	stop)  do_stop ;;
+	*)     printf 'usage: dictate start|stop\n' >&2; exit 2 ;;
+esac

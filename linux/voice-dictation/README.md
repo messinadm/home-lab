@@ -14,18 +14,18 @@ Dictate into any app on Linux, especially AI agents like Claude Code in a termin
 | FasterWhisper Distil Large-v3 | The speech model (English only), run on the GPU |
 | Speech Note NVIDIA add-on | CUDA acceleration |
 | [wtype](https://github.com/atx/wtype) 0.4 | Types text into the focused Wayland window |
-| [`dictate-stop`](dictate-stop) | Stops recording and types the result |
+| [`dictate`](dictate) | Starts and stops recording, and types the result |
 | COSMIC custom shortcuts | Alt+D to start, Alt+Shift+D to stop and type |
 
 Tested on Pop!_OS 24.04 with the COSMIC desktop (Wayland) and an NVIDIA RTX 5070 Ti on driver 580.
 
 ## How it works
 
-1. **Alt+D** tells Speech Note to start listening.
+1. **Alt+D** runs `dictate start`, which snapshots Speech Note's note and tells it to start listening.
 2. Speech Note appends each transcript to its note and saves the note in its `settings.conf`.
-3. **Alt+Shift+D** runs `dictate-stop`, which stops listening, waits for the note to change, and types the new text into the focused window with `wtype`.
+3. **Alt+Shift+D** runs `dictate stop`, which stops listening, waits until Speech Note is idle and the note has settled, then types everything added since the snapshot into the focused window with `wtype`.
 
-The text appears a few seconds after you press stop.
+The text appears a second or two after you press stop. Like Wispr Flow, it arrives when you finish, not word by word. Line breaks are typed as spaces, so a long dictation never presses Enter and sends a half-finished prompt. The clipboard isn't touched.
 
 ## Setup
 
@@ -60,10 +60,10 @@ sudo apt install wtype
 ### 5. Install the script
 
 ```bash
-install -m 0755 dictate-stop ~/.local/bin/dictate-stop
+install -m 0755 dictate ~/.local/bin/dictate
 ```
 
-It also needs `python3` and `flock`, which Pop!_OS ships by default.
+It also needs `python3`, `gdbus`, and `flock`, which Pop!_OS ships by default.
 
 ### 6. Add the shortcuts
 
@@ -71,8 +71,8 @@ In COSMIC Settings, under Keyboard, add two custom shortcuts:
 
 | Shortcut | Command |
 |---|---|
-| Alt+D | `flatpak run --command=dsnote net.mkiol.SpeechNote --action start-listening` |
-| Alt+Shift+D | `/home/<you>/.local/bin/dictate-stop` |
+| Alt+D | `/home/<you>/.local/bin/dictate start` |
+| Alt+Shift+D | `/home/<you>/.local/bin/dictate stop` |
 
 Give the script's full path. The shortcuts work immediately, no logout needed.
 
@@ -85,6 +85,7 @@ With Speech Note open, click into a text editor, press Alt+D, say a sentence, an
 - Open Speech Note once after you log in. It can sit in the background.
 - Alt+D, talk, Alt+Shift+D.
 - Speech Note keeps every transcript in its note, saved as plain text in `settings.conf`. Clear the note in the app when you want them gone.
+- If a long dictation gets cut off at a pause, check Speech Note's listening mode in its settings and choose the one that keeps listening until you stop it.
 - While bound, Alt+D no longer does its usual jobs (delete-word in terminals, focus the address bar in browsers). Pick another key if you rely on those.
 
 ## Things we struggled with
@@ -93,7 +94,9 @@ With Speech Note open, click into a text editor, press Alt+D, say a sentence, an
 
 **Speech Note's "type into active window" mode doesn't work on COSMIC.** It types through ydotool, and Ubuntu 24.04 ships ydotool 0.1.8 from 2021. The daemon runs and reports success, but COSMIC never delivers the keystrokes. `wtype` uses Wayland's virtual-keyboard protocol instead, and COSMIC accepts that.
 
-**Speech Note's clipboard mode returned empty text.** Plain `start-listening` works, so `dictate-stop` reads the transcript from the saved note rather than the clipboard.
+**Speech Note's clipboard mode returned empty text.** Plain `start-listening` works, so `dictate` reads the transcript from the saved note rather than the clipboard.
+
+**Speech Note sometimes saves the transcript before you press stop.** If the script only looked for changes after stop, it would miss text that was already saved, and dictation would work or fail depending on timing. That's why `dictate start` takes the snapshot, and `dictate stop` types everything added since then.
 
 **If Speech Note isn't running, Alt+D opens it instead of recording.** Actions only reach a running instance. Running it headless (`dsnote --service`) isn't an option while the app is open: it fails with `dbus service registration failed`.
 
@@ -105,8 +108,8 @@ pactl info | grep 'Default Source'
 
 It should name a microphone, not something ending in `.monitor`.
 
-**COSMIC can launch the script without the Wayland environment,** and `wtype` then fails without an error. `dictate-stop` finds the Wayland socket itself when `WAYLAND_DISPLAY` is missing.
+**COSMIC can launch the script without the session environment,** and `wtype` then fails without an error. `dictate` restores the Wayland and D-Bus addresses itself when they're missing.
 
 ## Troubleshooting
 
-`dictate-stop` logs each run to `$XDG_RUNTIME_DIR/dictate-stop.log`, usually `/run/user/1000/dictate-stop.log`. The log shows whether the note changed and how many characters were typed. It doesn't record the text.
+`dictate` logs each dictation to `$XDG_RUNTIME_DIR/dictate.log`, usually `/run/user/1000/dictate.log`. The log shows when listening started and stopped, and how many characters were typed. It doesn't record the text.
