@@ -153,7 +153,7 @@ For a specific dictation, read `$XDG_RUNTIME_DIR/dictate.log`, usually `/run/use
 
 ## Possible next steps
 
-- **Drop Speech Note.** Record with PipeWire, transcribe with faster-whisper directly on the GPU, and type with `wtype`, so nothing depends on another app's internals. This would be its own project.
+- **Drop Speech Note.** Done in [voice-dictation-01](../voice-dictation-01/): PipeWire, faster-whisper directly on the GPU, and `wtype`, with nothing depending on another app's internals.
 - **One key instead of two.** Make Alt+D a toggle: press to start, press again to stop and type. True hold-to-talk isn't possible here, because COSMIC shortcuts only fire when a key is pressed, not released.
 - **Start Speech Note at login,** so the first dictation after a reboot works without opening it by hand.
 - **Clear old transcripts.** Speech Note keeps every transcript in its note, and nothing prunes it.
