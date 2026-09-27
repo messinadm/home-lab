@@ -1,0 +1,13 @@
+[Unit]
+Description=whisper-dictate: local speech-to-text for dictation
+After=pipewire.service
+
+[Service]
+ExecStart=%h/.local/bin/whisper-dictate serve
+Restart=on-failure
+RestartSec=5
+# Never touch the network while running; the model is already on disk.
+Environment=HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1
+
+[Install]
+WantedBy=default.target

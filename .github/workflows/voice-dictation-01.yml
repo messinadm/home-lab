@@ -1,0 +1,27 @@
+name: voice-dictation-01
+
+on:
+  push:
+    paths:
+      - "linux/voice-dictation-01/**"
+      - ".github/workflows/voice-dictation-01.yml"
+  pull_request:
+    paths:
+      - "linux/voice-dictation-01/**"
+      - ".github/workflows/voice-dictation-01.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: linux/voice-dictation-01
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # No GPU on the runner: the cuda extra is skipped and the GPU test skips itself.
+      - run: uv sync --locked
+      - run: uv run pytest

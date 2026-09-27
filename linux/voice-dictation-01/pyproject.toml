@@ -1,0 +1,36 @@
+[project]
+name = "whisper-dictate"
+version = "0.1.0"
+description = "Local, GPU-accelerated dictation that types into the focused Wayland window"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "faster-whisper>=1.2.1",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# NVIDIA's cuBLAS 12.9 has kernels built for current GPUs; without it the
+# engine falls back to whatever cuBLAS the system has, if any.
+cuda = ["nvidia-cublas-cu12>=12.9"]
+
+[project.scripts]
+whisper-dictate = "whisper_dictate.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=whisper_dictate --cov-report=term-missing --cov-fail-under=90"
+markers = ["gpu: needs an NVIDIA GPU and the downloaded model (set WHISPER_DICTATE_GPU_TEST=1)"]
+
+[tool.coverage.run]
+branch = true

@@ -21,10 +21,14 @@ Goal, What it uses, How it works, Requirements, Setup, Daily use, Things we stru
 
 This repo may be public. Never commit usernames or home paths (write `/home/<you>`), hardware IDs such as Bluetooth addresses, or anything dictated.
 
-## Scripts
+## Code and tests
 
+- Any code needs unit tests that run on the build, with at least 90% coverage.
+- Python projects are uv projects: `pyproject.toml`, `uv.lock`, and `.python-version`. `uv run pytest` runs the tests and enforces the coverage floor.
+- Tests use fakes for hardware and outside tools. Tests that need real hardware are marked and skipped unless asked for, because CI has none.
+- Each project with code has its own workflow, `.github/workflows/<project>.yml`, triggered only by changes to that project's directory or that workflow file.
 - Bash: tabs, `[[ ]]`, quoted expansions, no `set -e`, fixed paths to tools.
-- If a script is installed outside the repo (for example `~/.local/bin`), keep the repo copy identical.
+- If code is installed outside the repo (for example `~/.local/bin`), keep the repo copy identical.
 
 ## Git
 
