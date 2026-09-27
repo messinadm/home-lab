@@ -191,13 +191,13 @@ def run_service(settings: Settings) -> int:  # pragma: no cover - needs the GPU
     info = {"model": settings.model, "device": settings.device,
             "cublas": transcriber.loaded_cublas()}
     log.info("ready: %s", info)
-    from .server import Service, serve
+    from .server import Service, sd_notify, serve
 
     service = Service(recorder.Recorder(settings.recording_path), engine, info)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
-    serve(service, settings.socket_path, stop)
+    serve(service, settings.socket_path, stop, on_ready=lambda: sd_notify("READY=1"))
     return 0
 
 

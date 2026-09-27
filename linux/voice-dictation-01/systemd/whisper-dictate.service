@@ -3,6 +3,9 @@ Description=whisper-dictate: local speech-to-text for dictation
 After=pipewire.service
 
 [Service]
+# Ready only once the model is loaded and the socket is listening.
+Type=notify
+TimeoutStartSec=120
 ExecStart=%h/.local/bin/whisper-dictate serve
 Restart=on-failure
 RestartSec=5

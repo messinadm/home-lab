@@ -7,7 +7,7 @@ import os
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -105,13 +105,33 @@ def bind(path: Path) -> socket.socket:
     return server
 
 
+def sd_notify(message: str, env: Mapping[str, str] | None = None) -> bool:
+    """Send a status message to systemd, as Type=notify services do.
+
+    Returns False when not run by systemd or when the socket can't be reached.
+    """
+    env = os.environ if env is None else env
+    address = env.get("NOTIFY_SOCKET", "")
+    if not address:
+        return False
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as conn:
+            conn.connect(address)
+            conn.sendall(message.encode())
+    except OSError:
+        return False
+    return True
+
+
 def serve(service: Service, path: Path, stop: threading.Event,
-          ready: threading.Event | None = None) -> None:
+          on_ready: Callable[[], object] | None = None) -> None:
     """Handle one connection at a time until `stop` is set."""
     server = bind(path)
     server.settimeout(0.2)
-    if ready is not None:
-        ready.set()
+    if on_ready is not None:
+        on_ready()
     try:
         while not stop.is_set():
             try:

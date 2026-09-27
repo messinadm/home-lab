@@ -5,7 +5,9 @@ import threading
 from fakes import FakeRecorder, FakeTranscriber
 
 from whisper_dictate import client, protocol
-from whisper_dictate.server import Service, bind, handle_connection, serve
+import os
+
+from whisper_dictate.server import Service, bind, handle_connection, sd_notify, serve
 
 
 def make_service(tmp_path, clock=None, **options):
@@ -122,7 +124,7 @@ def test_serve_end_to_end_over_a_real_socket(tmp_path):
     service, _, _ = make_service(tmp_path, text="typed words")
     path = tmp_path / "s"
     stop, ready = threading.Event(), threading.Event()
-    thread = threading.Thread(target=serve, args=(service, path, stop, ready))
+    thread = threading.Thread(target=serve, args=(service, path, stop, ready.set))
     thread.start()
     try:
         assert ready.wait(5)
@@ -133,3 +135,44 @@ def test_serve_end_to_end_over_a_real_socket(tmp_path):
         thread.join(5)
     assert not thread.is_alive()
     assert not path.exists()
+
+
+def test_serve_works_without_a_ready_callback(tmp_path):
+    service, _, _ = make_service(tmp_path)
+    path = tmp_path / "s"
+    stop = threading.Event()
+    thread = threading.Thread(target=serve, args=(service, path, stop))
+    thread.start()
+    try:
+        for _ in range(100):
+            if path.exists():
+                break
+            threading.Event().wait(0.02)
+        assert client.request(path, "status", timeout=5)["state"] == "idle"
+    finally:
+        stop.set()
+        thread.join(5)
+
+
+def test_sd_notify_without_systemd_does_nothing():
+    assert sd_notify("READY=1", env={}) is False
+
+
+def test_sd_notify_sends_to_a_filesystem_socket(tmp_path):
+    path = tmp_path / "notify"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as listener:
+        listener.bind(str(path))
+        assert sd_notify("READY=1", env={"NOTIFY_SOCKET": str(path)}) is True
+        assert listener.recv(64) == b"READY=1"
+
+
+def test_sd_notify_handles_abstract_sockets():
+    name = f"whisper-dictate-test-{os.getpid()}"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as listener:
+        listener.bind("\0" + name)
+        assert sd_notify("READY=1", env={"NOTIFY_SOCKET": "@" + name}) is True
+        assert listener.recv(64) == b"READY=1"
+
+
+def test_sd_notify_survives_a_missing_socket(tmp_path):
+    assert sd_notify("READY=1", env={"NOTIFY_SOCKET": str(tmp_path / "gone")}) is False
