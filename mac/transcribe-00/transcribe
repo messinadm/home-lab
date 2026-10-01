@@ -7,10 +7,13 @@
 # Usage: transcribe [-m MODEL] [-f FORMAT] [-o OUTDIR] FILE...
 #        transcribe fetch-model [MODEL]
 
-FFMPEG="/opt/homebrew/bin/ffmpeg"
-FFPROBE="/opt/homebrew/bin/ffprobe"
-WHISPER="/opt/homebrew/bin/whisper-cli"
-CURL="/usr/bin/curl"
+# Homebrew's prefix on Apple Silicon. Intel Macs set TRANSCRIBE_BREW_BIN to
+# /usr/local/bin; the tests point both overrides at fakes.
+BREW_BIN="${TRANSCRIBE_BREW_BIN:-/opt/homebrew/bin}"
+FFMPEG="$BREW_BIN/ffmpeg"
+FFPROBE="$BREW_BIN/ffprobe"
+WHISPER="$BREW_BIN/whisper-cli"
+CURL="${TRANSCRIBE_CURL:-/usr/bin/curl}"
 
 MODEL_DIR="${TRANSCRIBE_MODEL_DIR:-$HOME/.local/share/transcribe/models}"
 MODEL="${TRANSCRIBE_MODEL:-medium.en}"
@@ -98,7 +101,9 @@ transcribe_one() {
 		-of default=noprint_wrappers=1:nokey=1 "$src" 2>/dev/null)"
 	printf '==> %s (%.0fs)\n' "$base" "${duration:-0}"
 
-	tmpwav="$(mktemp -t transcribe)" || die "could not create temp file"
+	# An explicit template works with both BSD and GNU mktemp; "-t name"
+	# is BSD-only.
+	tmpwav="$(mktemp "${TMPDIR:-/tmp}/transcribe.XXXXXX")" || die "could not create temp file"
 	mv "$tmpwav" "$tmpwav.wav"
 	tmpwav="$tmpwav.wav"
 

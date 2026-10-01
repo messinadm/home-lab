@@ -1,0 +1,8 @@
+#!/bin/bash
+# Fake ffprobe: logs its arguments and reports a 7.6 s duration, or
+# nothing when FAKE_FFPROBE_EMPTY is set.
+
+printf 'ffprobe %s\n' "$*" >> "$FAKE_LOG"
+if [[ -z "$FAKE_FFPROBE_EMPTY" ]]; then
+	printf '7.6\n'
+fi

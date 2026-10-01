@@ -55,8 +55,8 @@ Nothing goes to the network except the one-time model download.
 | Homebrew | in `/opt/homebrew` | `brew --prefix` |
 | Disk | ~1.6 GB for the model | `df -h ~` |
 
-Intel Macs and other model sizes are untested. The tool paths in the script are the
-Apple Silicon Homebrew prefix; on Intel they'd be `/usr/local/bin`.
+Intel Macs and other model sizes are untested. The script looks for the tools in the
+Apple Silicon Homebrew prefix; on Intel, set `TRANSCRIBE_BREW_BIN=/usr/local/bin`.
 
 ## Setup
 
@@ -66,7 +66,17 @@ Apple Silicon Homebrew prefix; on Intel they'd be `/usr/local/bin`.
 brew install ffmpeg whisper-cpp
 ```
 
-### 2. Install the command
+### 2. Run the tests
+
+```bash
+brew install bats-core kcov
+tests/run
+```
+
+All tests should pass, with at least 90% coverage. They use fake versions of ffmpeg,
+whisper.cpp and curl, so they need no model and no network.
+
+### 3. Install the command
 
 ```bash
 mkdir -p ~/.local/bin
@@ -76,7 +86,7 @@ chmod +x ~/.local/bin/transcribe
 
 Make sure `~/.local/bin` is on your `PATH`.
 
-### 3. Download the model
+### 4. Download the model
 
 ```bash
 transcribe fetch-model
@@ -86,7 +96,7 @@ About 1.5 GB, and the only step that touches the network. It lands in
 `~/.local/share/transcribe/models`. Pass a name to get a different one:
 `transcribe fetch-model small.en`.
 
-### 4. Try it
+### 5. Try it
 
 ```bash
 transcribe some-recording.m4a
@@ -112,6 +122,7 @@ Environment variables, if the flags get repetitive:
 |---|---|
 | `TRANSCRIBE_MODEL` | Default model instead of `medium.en` |
 | `TRANSCRIBE_MODEL_DIR` | Where models live |
+| `TRANSCRIBE_BREW_BIN` | Where Homebrew's tools are, instead of `/opt/homebrew/bin` |
 
 ## Things we struggled with
 
@@ -141,7 +152,7 @@ rest of the input.
 
 | Symptom | Cause |
 |---|---|
-| `missing /opt/homebrew/bin/…` | Tools not installed, or Intel Mac — see Requirements |
+| `missing /opt/homebrew/bin/…` | Tools not installed, or Intel Mac — set `TRANSCRIBE_BREW_BIN` |
 | `model not found` | Run `transcribe fetch-model` |
 | `could not decode audio from …` | No audio stream, or a format ffmpeg can't read. Check with `ffprobe <file>`. |
 | Transcript is mostly "Thank you" | The recording is mostly silence |
@@ -154,9 +165,8 @@ rest of the input.
   `transcribe fetch-model medium` gets one, but it's untested here.
 - **No speaker labels.** The output is one undifferentiated stream of text, so a
   conversation between several people reads as one voice. This is the biggest gap.
-- Tool paths are hardcoded to the Apple Silicon Homebrew prefix.
-- No tests. It's a wrapper around three commands, in the same shape as
-  [voice-dictation-00](../../linux/voice-dictation-00/).
+- Tested only on Apple Silicon. Intel Macs need `TRANSCRIBE_BREW_BIN`, and the
+  tests run the script against fakes, not the real tools.
 - The model loads and unloads per invocation, costing about a second each time.
   Irrelevant for one long file, wasteful across many short ones.
 
