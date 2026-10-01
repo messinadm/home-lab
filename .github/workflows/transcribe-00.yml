@@ -1,0 +1,27 @@
+name: transcribe-00
+
+on:
+  push:
+    paths:
+      - "mac/transcribe-00/**"
+      - ".github/workflows/transcribe-00.yml"
+  pull_request:
+    paths:
+      - "mac/transcribe-00/**"
+      - ".github/workflows/transcribe-00.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # The script targets macOS, but the tests fake every tool it calls, so a
+    # Linux runner is enough.
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mac/transcribe-00
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: /home/linuxbrew/.linuxbrew/bin/brew install bats-core kcov
+      - run: tests/run

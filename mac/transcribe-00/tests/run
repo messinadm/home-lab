@@ -1,0 +1,31 @@
+#!/bin/bash
+# Run the unit tests under kcov and fail if line coverage of transcribe
+# is below 90%. Needs bats-core and kcov from Homebrew.
+
+MIN_COVERAGE=90
+
+if [[ -x /opt/homebrew/bin/brew ]]; then
+	BREW_BIN="/opt/homebrew/bin"
+else
+	BREW_BIN="/home/linuxbrew/.linuxbrew/bin"
+fi
+BATS="$BREW_BIN/bats"
+KCOV="$BREW_BIN/kcov"
+JQ="/usr/bin/jq"
+
+here="$(cd "$(dirname "$0")" && pwd)"
+project="$(dirname "$here")"
+out="$project/coverage"
+
+/bin/rm -rf "$out"
+if ! "$KCOV" --include-path="$project/transcribe" "$out" "$BATS" "$here"; then
+	printf 'tests failed\n' >&2
+	exit 1
+fi
+
+percent="$("$JQ" -r '.percent_covered' "$out/bats/coverage.json")"
+printf 'transcribe line coverage: %s%%\n' "$percent"
+if ! /usr/bin/awk -v p="$percent" -v min="$MIN_COVERAGE" 'BEGIN { exit !(p >= min) }'; then
+	printf 'coverage below %s%%\n' "$MIN_COVERAGE" >&2
+	exit 1
+fi

@@ -1,0 +1,24 @@
+#!/bin/bash
+# Fake whisper-cli: logs its arguments, checks the WAV it was given
+# exists, and writes "<prefix>.<format>", or fails when FAKE_WHISPER_FAIL
+# is set.
+
+printf 'whisper-cli %s\n' "$*" >> "$FAKE_LOG"
+if [[ -n "$FAKE_WHISPER_FAIL" ]]; then
+	exit 1
+fi
+
+format=""
+prefix=""
+wav=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-f) wav="$2"; shift ;;
+		-of) prefix="$2"; shift ;;
+		-o*) format="${1#-o}" ;;
+	esac
+	shift
+done
+
+[[ -f "$wav" ]] || exit 3
+printf 'transcript\n' > "$prefix.$format"

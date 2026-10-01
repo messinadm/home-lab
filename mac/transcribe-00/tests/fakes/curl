@@ -1,0 +1,21 @@
+#!/bin/bash
+# Fake curl: logs its arguments and writes a stand-in model to the -o
+# path. With FAKE_CURL_FAIL set it writes part of one and fails, like an
+# interrupted download.
+
+printf 'curl %s\n' "$*" >> "$FAKE_LOG"
+
+out=""
+while [[ $# -gt 0 ]]; do
+	if [[ "$1" == "-o" ]]; then
+		out="$2"
+		shift
+	fi
+	shift
+done
+
+if [[ -n "$FAKE_CURL_FAIL" ]]; then
+	printf 'trunc' > "$out"
+	exit 22
+fi
+printf 'model\n' > "$out"
