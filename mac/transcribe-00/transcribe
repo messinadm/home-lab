@@ -1,0 +1,162 @@
+#!/bin/bash
+# Transcribe an audio or video file to text with whisper.cpp, on macOS.
+#
+# Converts whatever ffmpeg can read into the 16 kHz mono WAV whisper.cpp wants,
+# runs the model, and writes the transcript next to the source file.
+#
+# Usage: transcribe [-m MODEL] [-f FORMAT] [-o OUTDIR] FILE...
+#        transcribe fetch-model [MODEL]
+
+FFMPEG="/opt/homebrew/bin/ffmpeg"
+FFPROBE="/opt/homebrew/bin/ffprobe"
+WHISPER="/opt/homebrew/bin/whisper-cli"
+CURL="/usr/bin/curl"
+
+MODEL_DIR="${TRANSCRIBE_MODEL_DIR:-$HOME/.local/share/transcribe/models}"
+MODEL="${TRANSCRIBE_MODEL:-medium.en}"
+FORMAT="txt"
+OUTDIR=""
+BASE_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+
+die() {
+	printf 'transcribe: %s\n' "$1" >&2
+	exit 1
+}
+
+usage() {
+	cat >&2 <<-'EOF'
+		Usage: transcribe [-m MODEL] [-f FORMAT] [-o OUTDIR] FILE...
+		       transcribe fetch-model [MODEL]
+		
+		  -m MODEL   tiny.en | base.en | small.en | medium.en | large-v3
+		             (default: medium.en, or $TRANSCRIBE_MODEL)
+		  -f FORMAT  txt | srt | vtt | json  (default: txt)
+		  -o OUTDIR  where to write transcripts (default: beside the source file)
+		
+		Models are stored in $TRANSCRIBE_MODEL_DIR
+		(default: ~/.local/share/transcribe/models).
+	EOF
+	exit 2
+}
+
+check_tools() {
+	local tool
+	for tool in "$FFMPEG" "$FFPROBE" "$WHISPER"; do
+		if [[ ! -x "$tool" ]]; then
+			die "missing $tool -- run: brew install ffmpeg whisper-cpp"
+		fi
+	done
+}
+
+model_path() {
+	printf '%s/ggml-%s.bin' "$MODEL_DIR" "$1"
+}
+
+fetch_model() {
+	local name="${1:-$MODEL}"
+	local dest
+	dest="$(model_path "$name")"
+
+	if [[ -f "$dest" ]]; then
+		printf 'Already have %s\n' "$dest"
+		return 0
+	fi
+
+	mkdir -p "$MODEL_DIR" || die "could not create $MODEL_DIR"
+	printf 'Downloading %s (this is a large file)...\n' "$name"
+
+	# Download to a temporary name so an interrupted run does not leave a
+	# truncated file that later looks like a valid model.
+	if ! "$CURL" -fL --progress-bar -o "$dest.part" "$BASE_URL/ggml-$name.bin"; then
+		rm -f "$dest.part"
+		die "download failed for model '$name'"
+	fi
+
+	mv "$dest.part" "$dest" || die "could not move model into place"
+	printf 'Saved %s\n' "$dest"
+}
+
+transcribe_one() {
+	local src="$1"
+	local model_file="$2"
+	local dir base stem out_prefix tmpwav duration
+
+	[[ -f "$src" ]] || die "no such file: $src"
+
+	dir="$(dirname "$src")"
+	base="$(basename "$src")"
+	stem="${base%.*}"
+
+	if [[ -n "$OUTDIR" ]]; then
+		mkdir -p "$OUTDIR" || die "could not create $OUTDIR"
+		out_prefix="$OUTDIR/$stem"
+	else
+		out_prefix="$dir/$stem"
+	fi
+
+	duration="$("$FFPROBE" -v error -show_entries format=duration \
+		-of default=noprint_wrappers=1:nokey=1 "$src" 2>/dev/null)"
+	printf '==> %s (%.0fs)\n' "$base" "${duration:-0}"
+
+	tmpwav="$(mktemp -t transcribe)" || die "could not create temp file"
+	mv "$tmpwav" "$tmpwav.wav"
+	tmpwav="$tmpwav.wav"
+
+	# -nostdin keeps ffmpeg from swallowing the terminal when several files
+	# are processed in one run.
+	if ! "$FFMPEG" -nostdin -y -loglevel error -i "$src" \
+		-ar 16000 -ac 1 -c:a pcm_s16le "$tmpwav"; then
+		rm -f "$tmpwav"
+		die "could not decode audio from $base"
+	fi
+
+	if ! "$WHISPER" -m "$model_file" -f "$tmpwav" \
+		"-o$FORMAT" -of "$out_prefix" -pp; then
+		rm -f "$tmpwav"
+		die "transcription failed for $base"
+	fi
+
+	rm -f "$tmpwav"
+	printf '    wrote %s.%s\n' "$out_prefix" "$FORMAT"
+}
+
+main() {
+	if [[ "$1" == "fetch-model" ]]; then
+		shift
+		fetch_model "$1"
+		exit 0
+	fi
+
+	while getopts ':m:f:o:h' opt; do
+		case "$opt" in
+			m) MODEL="$OPTARG" ;;
+			f) FORMAT="$OPTARG" ;;
+			o) OUTDIR="$OPTARG" ;;
+			h) usage ;;
+			*) usage ;;
+		esac
+	done
+	shift $((OPTIND - 1))
+
+	[[ $# -gt 0 ]] || usage
+
+	case "$FORMAT" in
+		txt|srt|vtt|json) ;;
+		*) die "unknown format '$FORMAT' (txt, srt, vtt, json)" ;;
+	esac
+
+	check_tools
+
+	local model_file
+	model_file="$(model_path "$MODEL")"
+	if [[ ! -f "$model_file" ]]; then
+		die "model not found: $model_file -- run: transcribe fetch-model $MODEL"
+	fi
+
+	local file
+	for file in "$@"; do
+		transcribe_one "$file" "$model_file"
+	done
+}
+
+main "$@"
